@@ -1,10 +1,19 @@
 # Server Sensor Monitor 專案規格
 
-文件版本：0.1　｜　日期：2026-10-01　｜　目標產品版本：1.0.0
+文件版本：0.2　｜　日期：2026-10-01　｜　目標產品版本：1.0.0
 
-本文件定義一個用於學習工程自動化的 C++ 命令列專案。程式讀取模擬伺服器感測器資料，依測試規格檢查溫度與風扇轉速；工程流程涵蓋 Git 分支、Pull Request、Docker、建置、測試、靜態分析、報告保存與版本發布。
+本文件定義一個用於學習工程自動化的 C++ 命令列專案。程式讀取模擬伺服器感測器資料，依測試規格檢查溫度與風扇轉速；工程流程涵蓋 Git 分支、Pull Request、容器、建置、測試、靜態分析、報告保存與版本發布。
 
 這是一份待實作的設計規格，不代表功能或 CI 已完成。以下流程是針對個人專案選定的工程做法，不宣稱所有公司採用相同工具。文件使用 **MUST** 表示 v1.0 必須完成，**SHOULD** 表示建議，**OPTIONAL** 表示延伸項目。
+
+## 0 修訂紀錄
+
+| 版本 | 日期 | 變更 |
+|---|---|---|
+| 0.1 | 2026-10-01 | 初版 |
+| 0.2 | 2026-10-01 | 補齊未定義處：數值精度策略與溫度小數位數上限（5.1、6）、key 語法（5.1）、CR 與行長計算（5.1）、數值顯示格式（7.1、7.2）、`--version` 格式（4.3）、profile 整數欄位（6）、容器引擎可為 Docker 或 rootless Podman（10）、repository 可見性（11）、缺 runtime library 演練方式（17） |
+
+---
 
 ## 1 專案目的與成功標準
 
@@ -13,7 +22,7 @@
 完成後應能展示：
 
 1. 從需求及驗收條件建立 issue，在 feature branch 完成變更並提出 PR。
-2. 本機與 CI 使用相同的 Docker 建置與測試環境定義。
+2. 本機與 CI 使用相同的容器建置與測試環境定義。
 3. PR 自動編譯、執行 unit tests、執行 CLI 整合驗證與靜態分析。
 4. 不符合規格的變更無法通過合併門檻；失敗時仍可取得診斷資料。
 5. 版本 tag 對應明確的 source commit，通過檢查後產生經測試的 release package。
@@ -32,7 +41,7 @@
 | 設定 | JSON profile 定義必備感測器、有效範圍與 warning／critical 門檻 |
 | 輸出 | 人可閱讀的 text 與供 automation 使用的 JSON |
 | 測試 | GoogleTest unit tests、CTest、Python CLI integration tests |
-| 環境 | Docker 建置與測試 image；Linux x86_64 |
+| 環境 | OCI 容器（Dockerfile）建置與測試 image；Linux x86_64 |
 | CI | GitHub Actions、PR required check、報告與紀錄保存 |
 | 交付 | Linux tar.gz、SHA256SUMS、build metadata、GitHub Release |
 | 文件 | README、spec、測試計畫、故障排查紀錄、CHANGELOG |
@@ -83,12 +92,12 @@ server-sensor-monitor --version
 | `--input PATH` | 檢查模式必填 | 指定一份 sensor snapshot |
 | `--profile PATH` | 檢查模式必填 | 指定明確的 profile，避免依賴工作目錄中的隱藏預設值 |
 | `--format text\|json` | 選填 | 預設 text |
-| `--help` | 獨立模式 | 印出用法，exit 0，不讀取檔案 |
-| `--version` | 獨立模式 | 印出產品版本與 commit，exit 0，不讀取檔案 |
+| `--help` | 獨立模式 | 印出用法至 stdout，exit 0，不讀取檔案 |
+| `--version` | 獨立模式 | 依 4.3 格式印出產品版本與 commit，exit 0，不讀取檔案 |
 
-MUST 拒絕未知旗標、重複旗標、缺少旗標值、額外 positional arguments、不支援的 format。help／version 必須各自單獨使用；與其他參數混用視為用法錯誤。檔案路徑可含空白，由 shell 引號及程式參數陣列正確處理。
+MUST 拒絕未知旗標、重複旗標、缺少旗標值、額外 positional arguments、不支援的 format。help／version 必須各自單獨使用；與其他參數混用視為用法錯誤。檔案路徑可含空白，由 shell 引號及程式參數陣列正確處理。v1.0 只支援 `--flag VALUE` 形式，不支援 `--flag=VALUE`；後者視為未知旗標。
 
-參數解析成功後，依序驗證 profile，再讀取及驗證 input，最後評估與輸出。CLI 用法錯誤以 text 寫入 stderr；參數解析成功且指定 JSON 後，其餘可預期錯誤也必須產生 JSON。
+參數解析成功後，依序驗證 profile，再讀取及驗證 input，最後評估與輸出。CLI 用法錯誤以 text 寫入 stderr、exit 2；參數解析成功且指定 JSON 後，其餘可預期錯誤也必須產生 JSON。
 
 ### 4.1 退出碼
 
@@ -107,6 +116,19 @@ text 模式：有效資料的逐 sensor 結果及總結寫入 stdout；輸入或
 
 JSON 模式：stdout 只輸出一份 JSON object 加換行，不混入 debug 訊息、進度、ANSI 顏色碼。錯誤時輸出結構化 error object，stderr 可補充診斷文字。automation 的判斷以 JSON 欄位及退出碼為準，不依賴 stderr 文句。
 
+### 4.3 版本輸出格式
+
+`--version` 輸出單行：
+
+```
+server-sensor-monitor <VERSION> (commit <COMMIT>)
+```
+
+- `<VERSION>` 取自 repository 根目錄 `VERSION` 檔，於 configure 階段嵌入。
+- `<COMMIT>` 為 40 字元小寫 hex 的完整 source commit SHA，由 build metadata 明確傳入（容器內沒有 `.git`）。
+- 本機開發 build 未提供 commit 時顯示 `unknown`；工作目錄有未提交變更時可加後綴 `-dirty`。這兩種值只允許出現在非 release build，release preflight 必須拒絕（見 13.1）。
+- JSON 輸出的 `tool_version`、`commit_sha` 使用相同值。
+
 ## 5 Sensor 輸入格式
 
 一份檔案代表同一台模擬 server 的一個 snapshot，單位不寫在數值中。
@@ -123,17 +145,20 @@ FAN1_RPM=0
 ### 5.1 語法規則
 
 - MUST 支援 UTF-8 文字、LF／CRLF，以及檔尾沒有換行。
-- 忽略空白行與去除前置空白後以 `#` 開頭的整行註解；不支援 inline comment。
+- **行的切分**：以 LF 切行；若 LF 前緊接一個 CR，該 CR 視為換行的一部分並移除。其他位置出現的 CR（含單獨 CR 換行的檔案）回報 INPUT_FORMAT_ERROR。
+- 忽略空白行（去除空格與 tab 後為空）與去除前置空白後以 `#` 開頭的整行註解；不支援 inline comment。
 - 去除 key、value 兩側的空格與 tab；key 區分大小寫。
 - 每個資料行恰好一個 `=`，兩側不可為空。
+- **key 語法**為 `[A-Za-z][A-Za-z0-9_]*`。不符合此語法的 key 回報 INPUT_FORMAT_ERROR；符合語法但不在 inventory 中（含大小寫不符，例如 `cpu_temp`）回報 UNKNOWN_SENSOR。
 - key 必須存在於指定 profile；重複 key、未知 key 與缺少必要 sensor 都是錯誤，不覆蓋、不忽略。
-- 溫度語法為 `-?[0-9]+(\.[0-9]+)?`；RPM 為 `[0-9]+`。不接受科學記號、逗號小數點、單位後綴、NaN、Inf、前置加號或未完整解析的字串。
-- 數值須可表示且為有限值；溫度以 C++ `double` 處理，RPM 以整數處理。比較前不得先將數值四捨五入。
-- 檔案不得超過 1 MiB，單行不得超過 1,024 bytes（不含換行）。超過即回報 INPUT_LIMIT_EXCEEDED。
-- 空檔案或只有註解的檔案回報 EMPTY_INPUT。
+- **溫度語法**為 `-?[0-9]+(\.[0-9]{1,6})?`，即最多 6 位小數；**RPM 語法**為 `[0-9]+`。不接受科學記號、逗號小數點、單位後綴、NaN、Inf、前置加號或未完整解析的字串。超過 6 位小數為 INPUT_FORMAT_ERROR。`-0` 與 `-0.0` 視為合法且等於 0。
+- 數值須可表示且為有限值；溫度以 C++ `double` 處理，RPM 以整數處理。語法正確但超出可表示範圍（例如 RPM 位數過多導致整數溢位、溫度轉換結果為無限大）視為 VALUE_OUT_OF_RANGE。
+- **精度策略**：溫度字串以 IEEE 754 double 解析（`std::strtod` 或 `std::from_chars`）後直接與 profile 門檻比較，不另做四捨五入、不加 epsilon。因輸入最多 6 位小數、有效範圍有界、profile 溫度欄位為整數（第 6 節），double 比較的結果與十進位數學比較一致。決策理由見 `docs/decisions/0002-numeric-precision.md`。
+- 檔案不得超過 1 MiB（1,048,576 bytes），單行不得超過 1,024 bytes（不含 LF 及其前方作為換行一部分的 CR）。超過即回報 INPUT_LIMIT_EXCEEDED；檔案大小在解析前檢查。
+- 空檔案或只有空白行／註解的檔案回報 EMPTY_INPUT。
 - UTF-8 BOM／NUL／非法 UTF-8 不支援並回報 INPUT_FORMAT_ERROR。
 
-語法、資料範圍或完整性有錯時，不產生部分 PASS。先完成輸入驗證，再執行評估。輸入資料行按行號驗證並在第一個錯誤停止；缺少必要 sensor 在讀完整份檔案後依 profile 順序回報第一項。profile 自身錯誤優先於 input 錯誤。
+語法、資料範圍或完整性有錯時，不產生部分 PASS。先完成輸入驗證，再執行評估。輸入資料行按行號驗證（含 VALUE_OUT_OF_RANGE）並在第一個錯誤停止；DUPLICATE_SENSOR 的 line 為第二次出現的行號；缺少必要 sensor 在讀完整份檔案後依 profile 順序回報第一項，line 為 null。profile 自身錯誤優先於 input 錯誤。
 
 ### 5.2 固定的 v1.0 sensor inventory
 
@@ -173,7 +198,11 @@ profile 的 sensors array 必須包含下列五項，恰好各一次；不接受
 
 fan 項目使用 `warning_low` 和 `critical_low`，不使用 high 欄位。所有頂層及 sensor 層級欄位均為必填；拒絕未知欄位、重複 JSON member、未知 schema version、錯誤型別、非有限或超出可表示範圍的數字。`profile_id` 為 1–64 字元的 `[A-Za-z0-9._-]+`。profile 檔案也以 1 MiB 為上限。
 
-溫度必須滿足 `valid_min < warning_high < critical_high <= valid_max`；fan 必須滿足 `0 <= valid_min <= critical_low < warning_low <= valid_max`，所有 fan 數值均為整數。name／kind／unit 必須與固定 inventory 對應。缺少欄位不能靜默套用預設值。
+**數值型別**：v1.0 profile 中所有數值欄位（溫度與 fan）都必須是 JSON integer。`85.0`、`3000.0`、`1e3` 等以小數點或指數表示者回報 PROFILE_INVALID。溫度欄位的絕對值不得超過 1,000,000，fan 欄位不得超過 1,000,000（超過為 PROFILE_INVALID），使 5.1 的精度保證成立。溫度門檻允許小數列為後續版本，屆時需重新評估 5.1 的精度策略。
+
+溫度必須滿足 `valid_min < warning_high < critical_high <= valid_max`；fan 必須滿足 `0 <= valid_min <= critical_low < warning_low <= valid_max`。name／kind／unit 必須與固定 inventory 對應。缺少欄位不能靜默套用預設值。
+
+實作注意：nlohmann/json 預設對重複 member 採覆蓋，不會報錯；偵測重複 member 需自行透過 SAX 介面或 parser callback 實作。
 
 ### 6.1 demo 門檻
 
@@ -212,6 +241,8 @@ v1.0 固定採取 warning 也回傳非零的策略，不增加 warning-as-error 
 Overall: FAIL
 ```
 
+**數值顯示**：text 模式顯示 input 中去除兩側空白後的原始數值字串（例如輸入 `72.50` 即顯示 `72.50`），不經 double 轉回字串，因此顯示格式不會影響、也不會掩蓋判斷結果。
+
 顯示順序不因 input 行順序改變。text 模式可改善人類可讀性，但 JSON 才是穩定的 automation 介面。
 
 ### 7.2 JSON
@@ -238,7 +269,7 @@ Overall: FAIL
 }
 ```
 
-所有頂層欄位必須存在。sensors 順序固定為 CPU、GPU0、GPU1、FAN0、FAN1。value 為 JSON number；RPM 的 value 為整數。正常 reason_code 為 `WITHIN_LIMITS`；temperature 的非正常代碼為 `AT_OR_ABOVE_WARNING`／`AT_OR_ABOVE_CRITICAL`；fan 為 `BELOW_WARNING`／`AT_OR_BELOW_CRITICAL`。
+所有頂層欄位必須存在。sensors 順序固定為 CPU、GPU0、GPU1、FAN0、FAN1。`value` 為 JSON number：RPM 輸出 JSON integer；溫度輸出解析後 double 的 round-trip 表示（例如 72 可能輸出為 `72.0`），消費端應以數值而非字串比較。正常 reason_code 為 `WITHIN_LIMITS`；temperature 的非正常代碼為 `AT_OR_ABOVE_WARNING`／`AT_OR_ABOVE_CRITICAL`；fan 為 `BELOW_WARNING`／`AT_OR_BELOW_CRITICAL`。
 
 ERROR 時 sensors 必須為空 array，error 為 object；profile 驗證成功前 profile_id 為 null，之後使用實際值。例如：
 
@@ -286,7 +317,7 @@ error 的 code、message、sensor、line 欄位必須存在；sensor／line 不�
 |---|---|---|
 | TC-01 | 五顆正常 | PASS、exit 0、五筆 OK |
 | TC-02 | 溫度 84.9／85／94.9／95 | OK／WARNING／WARNING／CRITICAL，exit 0／1／1／1 |
-| TC-03 | fan 3000／2999／1001／1000／0 | OK／WARNING／WARNING／CRITICAL／CRITICAL |
+| TC-03 | fan 3000／2999／1001／1000／0 | OK／WARNING／WARNING／CRITICAL／CRITICAL，exit 0／1／1／1／1 |
 | TC-04 | warning 與 critical 同時存在 | FAIL，兩者均被保留 |
 | TC-05 | 只有 warning | WARN、exit 1 |
 | TC-06 | 五顆 sensor 各自缺少 | MISSING_SENSOR、exit 2 |
@@ -301,19 +332,21 @@ error 的 code、message、sensor、line 欄位必須存在；sensor／line 不�
 | TC-15 | 空白行、註解、CRLF、檔尾無換行 | 與等價標準 input 相同結果 |
 | TC-16 | 行順序改變 | 相同逐 sensor 結果及固定輸出順序 |
 | TC-17 | profile 不存在／JSON 不合法 | PROFILE_READ_ERROR／PROFILE_INVALID、exit 2 |
-| TC-18 | 門檻顛倒、欄位缺漏、未知欄位、重複 member | PROFILE_INVALID、exit 2 |
+| TC-18 | 門檻顛倒、欄位缺漏、未知欄位、重複 member、數值欄位非 integer | PROFILE_INVALID、exit 2 |
 | TC-19 | 修改 profile warning 為 80，input 為 82 | WARNING，證明沒有硬編碼 85 |
 | TC-20 | help／version／缺少參數／未知旗標 | 依第 4 節規定 |
 | TC-21 | input／profile 路徑包含空白 | 正常解析並執行 |
-| TC-22 | 超大檔案／超長行／NUL／非法 UTF-8 | 對應格式或大小錯誤，沒有 crash |
+| TC-22 | 超大檔案／超長行／NUL／非法 UTF-8／BOM／單獨 CR | 對應格式或大小錯誤，沒有 crash |
 | TC-23 | text 與 JSON 使用同一份資料 | 分類與 exit code 相同 |
 | TC-24 | JSON 欄位與型別、status／exit 一致性 | 符合 schema 及本規格 |
 | TC-25 | stub 程序超時、crash、輸出壞 JSON | validator 回報 ERROR，自身非零退出 |
 | TC-26 | 故意寫錯 expected status | validator 回報 FAIL，自身非零退出 |
 | TC-27 | 空 manifest、重複 case ID、報告無法寫入 | validator 回報 infrastructure error，非零退出 |
 | TC-28 | 解壓 release package 執行 normal／critical／invalid | 正確輸出與 0／1／2 退出碼 |
+| TC-29 | 高精度溫度 84.999999／85.000000／94.999999；84.9999999（7 位小數） | OK／WARNING／WARNING；INPUT_FORMAT_ERROR |
+| TC-30 | 單行恰好 1,024 bytes 與 1,025 bytes；CRLF 行恰好 1,024 bytes 內容 | 1,024 接受；1,025 為 INPUT_LIMIT_EXCEEDED |
 
-數值比較直接依規格的包含／不包含端點處理，不任意加 epsilon 改變門檻。另加高精度小數案例，防止顯示四捨五入反過來影響結果。
+數值比較直接依規格的包含／不包含端點處理，不任意加 epsilon 改變門檻。TC-29 防止顯示四捨五入或解析精度反過來影響結果。
 
 ### 8.3 Python validator 契約
 
@@ -329,7 +362,7 @@ python3 scripts/run_validation.py \
 
 cases.json 每筆包含唯一 id、input 相對路徑、profile 相對路徑、expected_exit_code、expected_overall_status、expected_sensor_statuses 或 expected_error_code。路徑以 manifest 所在目錄解析，不依賴呼叫者的目前目錄。無效 input 案例可故意指向不存在的 input；binary 與 manifest 本身不存在則是 harness 錯誤。
 
-MUST 使用 subprocess 參數陣列與 `shell=False`，設定每案 timeout，擷取 stdout／stderr。對預期 exit 1／2 的案例不要直接使用 `check=True` 把它當成測試失敗。
+MUST 使用 subprocess 參數陣列與 `shell=False`，設定每案 timeout，擷取 stdout／stderr。對預期 exit 1／2 的案例不要直接使用 `check=True` 把它當成測試失敗。validator 必須相容 Python 3.10（容器基準），即使開發機使用較新版本。
 
 每個案例必須分類為 PASS、FAIL 或 ERROR：符合所有 assertions 為 PASS；程式完成但結果不符為 FAIL；timeout、signal、無法啟動、JSON 無法解碼等為 ERROR。單案失敗後繼續執行其他可執行案例，不自動重試來把結果洗成綠色。
 
@@ -350,9 +383,9 @@ validator 自身退出碼：全部案例 PASS 且報告成功寫出為 0；任�
 | JSON | nlohmann/json，固定到明確版本／commit |
 | Python | 3.10 以上；標準函式庫為主，schema validator 依賴固定版本 |
 | 靜態檢查 | cppcheck；指定 C++17 與 Linux 64-bit 平台 |
-| 產物 | Linux x86_64 executable，動態依賴需列在 release 文件 |
+| 產物 | Linux x86_64 executable，動態連結 libstdc++／libc，動態依賴需列在 release 文件 |
 
-這是相容於目前 Ubuntu 22.04 練習環境的基準，不是對最新工具版本的宣稱。SHOULD 本機繼續使用既有 g++、CMake、GDB 學習；正式 CI gate 以 Docker 中的基準環境為準。
+這是相容於目前 Ubuntu 22.04 練習環境的基準，不是對最新工具版本的宣稱。SHOULD 本機繼續使用既有 g++、CMake、GDB 學習（無管理員權限的開發機可用 conda 等使用者層級環境安裝 CMake、Ninja、cppcheck、GDB）；正式 CI gate 以容器中的基準環境為準。
 
 依賴版本、commit／archive SHA256、來源 URL 與 license 記錄於 `docs/dependencies.md`。CMake FetchContent 若用 archive，必須驗證 hash；若用 Git 必須固定 commit，不追蹤 main。只在 image／configure 階段取得依賴，測試執行階段不需要網路。
 
@@ -364,18 +397,20 @@ CTest 以非零退出表示失敗，必須設定「沒有找到測試」也失�
 
 v1.0 不宣稱 bit-for-bit reproducible build。固定 base image digest 仍不足以固定後續 apt repository 的內容；每次 toolchain build 要記錄套件版本與 image ID。若需要更強重現性，再採套件 snapshot 或固定已發布的 toolchain image digest。
 
-## 10 Docker 規格
+## 10 容器規格
 
-Docker 的 v1.0 角色是提供一致的建置與測試工具環境；不必先把程式做成長期運行的服務，也不要求發布 image 到 registry。
+容器的 v1.0 角色是提供一致的建置與測試工具環境；不必先把程式做成長期運行的服務，也不要求發布 image 到 registry。
+
+**容器引擎**：image 定義使用標準 Dockerfile 語法。GitHub Actions 使用 Docker；本機開發環境若無 Docker 或無管理員權限，可使用 rootless Podman 執行相同 Dockerfile。`scripts/ci_local.sh` 以環境變數 `CONTAINER_ENGINE`（`docker`／`podman`）選擇引擎，未指定時依序偵測 docker、podman。Dockerfile 不得使用僅單一引擎支援的語法。決策理由見 `docs/decisions/0001-container-engine.md`。
 
 MUST 提供 `docker/Dockerfile.toolchain`，包含編譯器、CMake、Ninja、Python、cppcheck 及必要測試依賴。base image 在實作時固定到經查核的完整 digest，旁邊標註可讀的版本。官方建議固定 digest 及透過 CI 測試 image 變更，見 [S2]。
 
 容器執行時：
 
-- 以 host UID／GID 或明確的非 root user 運行，讓輸出檔不被 root 佔有。
-- source 與 output 的掛載位置清楚，input fixtures 不可由測試修改；需要產生暫存資料時使用個別暫存目錄。
+- 以 host UID／GID 或明確的非 root user 運行，讓輸出檔不被 root 佔有。Docker 使用 `--user "$(id -u):$(id -g)"`；rootless Podman 使用 `--userns=keep-id`。
+- source 與 output 的掛載位置清楚，input fixtures 不可由測試修改（source 以唯讀掛載）；需要產生暫存資料時使用個別暫存目錄。
 - 不使用 privileged mode，不掛入 Docker socket，不將主機憑證或整個 home 掛入。
-- Python validator 在容器內執行 CLI，不讓它每個案例再啟動一層 Docker。
+- Python validator 在容器內執行 CLI，不讓它每個案例再啟動一層容器。
 - 提供 `scripts/ci_local.sh` 作為本機單一入口；GitHub Actions 使用同一套底層腳本。
 - `.dockerignore` 排除 `.git`、build、reports、個人環境及機密檔案；source SHA 以明確 build metadata 傳入。
 
@@ -391,7 +426,7 @@ main 保護規則 MUST 要求 PR 與 ci-gate 成功，禁止 force push／刪除
 
 一人練習先不要求另一人的 approving review，避免無人能核准；仍需自我檢查 diff 與 PR checklist。兩人以上再加入至少一位 reviewer。自我檢查不宣稱等於獨立 code review。
 
-GitHub 官方文件指出 GitHub Free 的 public repository 可用 protected branches，private repository 的可用性依方案而異 [S3]。若選 private 且沒有平台強制 gate，要在 README 明確記錄此限制；單純約定不要合併不等於平台保護已啟用。
+GitHub 官方文件指出 GitHub Free 的 public repository 可用 protected branches，private repository 的可用性依方案而異 [S3]。**v1.0 採 public repository**：所有資料為合成資料，且需由平台實際強制 gate。若日後改為 private 且方案不支援，要在 README 明確記錄此限制；單純約定不要合併不等於平台保護已啟用。
 
 ## 12 CI Pipeline
 
@@ -453,7 +488,7 @@ CI 預設 `contents: read`；只有 release 的 publish job 取得 `contents: wr
 1. 發布相關程式、VERSION、CHANGELOG 已透過 PR 合併到 main。
 2. tag 必須精確符合 `vMAJOR.MINOR.PATCH`；例如 `v1.0.0`，版本數字除 0 外不使用前置零。
 3. tag 解引用後的 commit 必須可從 origin/main 追溯到；不得在未合併 feature commit 上發布。
-4. tag 的版本與 VERSION 完全一致。正式包的 `--version` 不可顯示 unknown／dirty。
+4. tag 的版本與 VERSION 完全一致。正式包的 `--version` 不可顯示 `unknown`／`-dirty`。
 5. release workflow checkout tag 的 commit，對同一 commit 重新執行完整必要檢查。不能只信任 main 曾經綠過。
 
 ### 13.2 發布步驟
@@ -506,7 +541,7 @@ Release 額外附 SHA256SUMS、驗證報告與 release notes。checksum 用於�
 | scripts/test.sh | unit／harness tests |
 | scripts/run_validation.py | CLI integration validation |
 | scripts/static_analysis.sh | cppcheck policy |
-| scripts/ci_local.sh | 本機 Docker 驗證入口 |
+| scripts/ci_local.sh | 本機容器驗證入口（Docker／Podman） |
 | scripts/package.sh | 打包已驗證的 binary |
 | scripts/smoke_package.py | 對解壓產物驗證 |
 | docker/Dockerfile.toolchain | 建置與測試環境 |
@@ -531,7 +566,7 @@ build、reports、dist 由腳本產生且不提交 Git。正式 release 檔案�
 | ID | 要求 | 驗收方法 |
 |---|---|---|
 | NFR-01 | 相同 input／profile 產生相同分類與退出碼 | 重複執行與改變行順序 |
-| NFR-02 | JSON stdout 不受 locale 或 debug logs 汙染 | parse JSON、驗證 schema |
+| NFR-02 | JSON stdout 不受 locale 或 debug logs 汙染 | parse JSON、驗證 schema；以非 C locale（例如小數點為逗號的 locale）執行 |
 | NFR-03 | 沒有網路也能執行已安裝工具與測試階段 | 容器斷網測試；依賴取得階段除外 |
 | NFR-04 | 無效輸入不造成未處理例外或 crash | negative fixtures |
 | NFR-05 | 每份 report 能追溯 source 與測試資料 | 核對 commit、run、checksum metadata |
@@ -549,9 +584,9 @@ build、reports、dist 由腳本產生且不提交 Git。正式 release 檔案�
 |---|---|---|
 | M0 規格與 repository | 建立 repo、README、spec、第一批 issues | 可說明輸入、輸出、gate 與範圍 |
 | M1 最小 C++ 與 CI | 固定數值判斷、CMake、最小 unit test、Actions build-test | PR 中測試紅→修正→綠的紀錄 |
-| M2 可使用的 CLI | parser、profile、exit codes、text／JSON、邊界 tests | TC-01 至 TC-24 適用案例通過 |
+| M2 可使用的 CLI | parser、profile、exit codes、text／JSON、邊界 tests | TC-01 至 TC-24、TC-29、TC-30 適用案例通過 |
 | M3 Python automation | manifest、結果比對、JUnit、timeout、harness tests | 故障案例正確 PASS，錯誤程式被判 FAIL |
-| M4 Docker 與完整 gate | 相同環境、cppcheck、reports、ci-gate、main protection | 本機重現 CI，失敗 PR 無法合併 |
+| M4 容器與完整 gate | 相同環境、cppcheck、reports、ci-gate、main protection | 本機（Docker 或 Podman）重現 CI，失敗 PR 無法合併 |
 | M5 Release | tag 驗證、package、runtime smoke、checksum、Release | 在乾淨環境執行下載後 package |
 | M6 故障演練與整理 | 失敗診斷紀錄、README 示範、版本說明 | 可完整解釋一次變更如何進入正式版本 |
 
@@ -570,7 +605,9 @@ M1 可先採固定門檻作為教學過渡，但 M2 必須移至 profile。不�
 | 壞 JSON | stub 輸出非 JSON 或錯誤 enum | schema／解析失敗，不能只因 exit code 正確而通過 |
 | 沒有測試 | 暫時移除所有 CTest 註冊或清空 manifest | gate 失敗，不可顯示 0 tests passed 即成功 |
 | 版本錯誤 | tag 與 VERSION 不同 | release preflight 失敗，沒有正式 Release |
-| 缺 runtime library | package smoke 環境缺少必要依賴 | smoke 失敗，publish 被阻擋 |
+| 缺 runtime library | 在演練分支讓 binary 連結一個只安裝於 toolchain image、未安裝於 runtime image 的 shared library（例如 toolchain 中的某個 `-dev` 套件提供的 `.so`） | smoke 失敗，publish 被阻擋 |
+
+註：Ubuntu 22.04 base image 本身已含 libstdc++6（apt 依賴它），因此「缺 libstdc++」無法以預設 runtime image 自然重現，故採上述注入方式。
 
 每次演練記錄症狀、定位的 job／case、根因、修正、預防測試與 run URL。這些紀錄可以作為面試時說明實際 automation 工作的證據。
 
@@ -580,7 +617,7 @@ M1 可先採固定門檻作為教學過渡，但 M2 必須移至 profile。不�
 - [ ] CLI 與 JSON 契約、錯誤代碼、exit codes 均有測試覆蓋。
 - [ ] 最低測試矩陣全部完成，必要測試沒有被 skipped，零案例會失敗。
 - [ ] Python harness 可正確分辨預期 sensor 故障、程式回歸與執行環境錯誤。
-- [ ] Docker 本機入口與 GitHub Actions 使用相同底層腳本。
+- [ ] 本機容器入口（Docker 或 Podman）與 GitHub Actions 使用相同底層腳本。
 - [ ] unit／integration／static gates 都能因刻意缺陷失敗。
 - [ ] 失敗 run 能取得已有報告，成功 run 缺報告不能通過。
 - [ ] main required check 有實際設定，並以失敗 PR 驗證無法合併。
