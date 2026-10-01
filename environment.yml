@@ -1,0 +1,18 @@
+# 本機開發用的 conda 環境（不含 C++ 編譯器，編譯器使用系統的 GCC 11）
+# 建立：conda env create -f environment.yml
+# 更新：conda env update -n ssm -f environment.yml --prune
+# 說明：docs/development.md
+name: ssm
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # 與 CI 基準環境（Ubuntu 22.04）一致，不可任意升級
+  - python=3.10
+  - cmake=3.22
+  # M4 決定容器內的 cppcheck 版本後，此處要跟著調整
+  - cppcheck=2.21
+  # 以下工具的版本差異不影響建置結果，不固定版本
+  - ninja
+  - gdb
+  - gh
